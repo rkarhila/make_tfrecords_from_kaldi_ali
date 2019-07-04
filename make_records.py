@@ -6,24 +6,41 @@ import tensorflow as tf
 import re
 
 from struct import unpack
+import pickle
 
 debug = False
 
-data_cache_dir = '/teamwork/t40511_asr/scratch/rkarhila/corpora_for_new_siak/new_new_new_tfrecords/'
+split_files = False
 
-phonesetfile='/l/rkarhila/kaldi-trunk/egs/multicorpora_all_corpora.old/s5/data/lang/phones.txt'
+kaldidir = 'multicorpora_all_corpora_duration_deaf'
 
-labelbasedir='/l/rkarhila/kaldi-trunk/egs/multicorpora_all_corpora.old/s5/data'
-modelfile='/l/rkarhila/kaldi-trunk/egs/multicorpora_all_corpora.old/s5/exp/tri3b/final.mdl'
+data_cache_dir = '/teamwork/t40511_asr/scratch/rkarhila/corpora_for_new_siak/new8_tfrecords/'
+
+phonesetfile='/l/rkarhila/kaldi-trunk/egs/'+kaldidir+'/s5/data/lang/phones.txt'
+
+labelbasedir='/l/rkarhila/kaldi-trunk/egs/'+kaldidir+'/s5/data'
+modelfile='/l/rkarhila/kaldi-trunk/egs/'+kaldidir+'/s5/exp/tri3b/final.mdl'
 
 promptsfile = '/teamwork/t40511_asr/scratch/rkarhila/corpora_for_new_siak/kaldi_necessities/all_corpora_all_files/data/text'
 filescpfile = '/teamwork/t40511_asr/scratch/rkarhila/corpora_for_new_siak/kaldi_necessities/all_corpora_all_files/data/wav.scp'
 
-alignmentbasedir='/l/rkarhila/kaldi-trunk/egs/multicorpora_all_corpora.old/s5/exp/'
+ipamapfile='/l/rkarhila/another_rnn_phone_classifier/source_data/phonesets/phone_sets.out.pickle'
 
-#modelfile='/l/rkarhila/kaldi-trunk/egs/multicorpora_all_corpora.old/s5/exp/tri3b/final.mdl'
+alignmentbasedir='/l/rkarhila/kaldi-trunk/egs/'+kaldidir+'/s5/exp/'
 
-#alignmentdir='/l/rkarhila/kaldi-trunk/egs/multicorpora_all_corpora.old/s5/exp/tri3b_ali_sp_cleaned_train/'
+#modelfile='/l/rkarhila/kaldi-trunk/egs/'+kaldidir+'/s5/exp/tri3b/final.mdl'
+
+#alignmentdir='/l/rkarhila/kaldi-trunk/egs/'+kaldidir+'/s5/exp/tri3b_ali_sp_cleaned_train/'
+
+duration_cutoff_kaldidir = 'multicorpora_finnish_only'
+duration_cutoff_pickle = duration_cutoff_kaldidir+'phone_cutoffs.pickle'
+
+
+ipadefinitions = pickle.load(open(ipamapfile, 'rb'))
+
+duration_cutoffs = pickle.load(open(duration_cutoff_pickle, 'rb'))['cutoffs']
+
+lengthening_mark = 'ː'
 
 alignmentdirs= {'train' : ['tri3b_ali_train_pfstar',
                            'tri3b_ali_train_speechdat-fi',
@@ -65,8 +82,11 @@ alignmentdirs= {'train' : ['tri3b_ali_train_pfstar',
                            "tri3b_ali_test_wsj1_si_et_h2_wv2",
                            "tri3b_ali_test_wsjcam0_si_et_1_clean_wv1",
                            "tri3b_ali_test_wsjcam0_si_et_1_clean_wv2",
-                           "tri3b_ali_test_tidigits_children" ] }
-
+                           "tri3b_ali_test_tidigits_children" ],
+                'siak' : [ "tri3b_ali_devel_siak_fi_en_uk",
+                           "tri3b_ali_test_siak_fi_en_uk" ],
+                'tellme' : [ "tri3b_ali_devel_tellme",
+                             "tri3b_ali_test_tellme" ]}
 speaker_age_file=''
 
 ali_to_phones='/l/rkarhila/kaldi-trunk/src/bin/ali-to-phones'
@@ -88,13 +108,13 @@ bytes_per_sample = 2
 utts_per_record = 3000.0
 
 # Some necessary functions:
-
+'''
 def load_waveform_chunk(filepath, beginsample=0, endsample=-1, bytes_per_sample=2):
 
     #print ("bytes per sample: ", bytes_per_sample)
     try:
         with open(filepath, mode='rb') as file: # b is important -> binary
-            file.seek(44 + beginsample * bytes_per_sample ) # WAV header is 44 bytes - Hopefully always!
+            file.seek(44 + int(beginsample * bytes_per_sample) ) # WAV header is 44 bytes - Hopefully always!
             if endsample > 0:                                   
                 fileContent = file.read( (endsample-beginsample) * bytes_per_sample )
             else:
@@ -123,7 +143,7 @@ def load_waveform_chunk(filepath, beginsample=0, endsample=-1, bytes_per_sample=
     
     #raw_audio_chunk = raw_audio_chunk[ beginsample : endsample ]
     return raw_audio_chunk
-
+'''
 
 def _int64_feature(value):
     return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
@@ -191,12 +211,26 @@ def extract_and_save_to_record(utterance_writer = None,
                                starttimeoffset = 0,
                                bucketlength = 1.0):
 
-    beginsample = 0 #starttime * fs * bytes_per_sample  
+
+    if len(individual_phonemes) < 2 and individual_phonemes[0][2] == 'sil':
+        print("Rejecting a single silence")
+        return phoneme_writer_counters
+
+    if len(individual_phonemes) == 2 and individual_phonemes[0][2] == 'sil' and individual_phonemes[1][2] == 'sil':
+        print("Rejecting a double silence")
+        return phoneme_writer_counters
+       
+
+    beginsample = starttime * fs 
+    #if beginsample>0:
+    #    print(sourcefile)
+    #    print("Starttime:", starttime)
+    #    print("Beginsample:", beginsample)
     endsample = -1
     #try:
     if True:
         with open(filepath, mode='rb') as file: # b is important -> binary
-            file.seek(44 + beginsample * bytes_per_sample ) # WAV header is 44 bytes - Hopefully always!
+            file.seek(44 + int(beginsample) * bytes_per_sample ) # WAV header is 44 bytes - Hopefully always!
             if endsample > 0:                                   
                 fileContent = file.read( (endsample-beginsample) * bytes_per_sample )
             else:
@@ -226,9 +260,12 @@ def extract_and_save_to_record(utterance_writer = None,
     #print(np.array( [ s[:3] for s in individual_phonemes ]).flatten().astype(np.float32).reshape([-1,3]))
     feature['alignment'] = to_tf_feature( np.array( [ s[:3] for s in individual_phonemes ]).flatten().astype(np.float32)   ) 
     
-    start = int(fs * (starttimeoffset + starttime))
-    end = int(fs * (starttimeoffset + starttime + duration))
+    start = 0 #int(fs * (starttimeoffset + starttime))
+    #end = int(fs*duration) #int(fs * (starttimeoffset + starttime + duration))
     
+    #if beginsample>0:
+    #print("individual_phonemes[-1] =", individual_phonemes[-1], "duration:", duration)
+    end = int(individual_phonemes[-1][1] * fs)
     feature['audio'] = to_tf_feature(  audio[start:end] )
 
     # Construct the Example proto object
@@ -421,11 +458,133 @@ for k,p in class_to_phone.items():
         class_to_class[int(k)] = short_phone_to_class[re.sub(r'_[BEIS]', '',p)]
         
 
+for phone in duration_cutoffs.keys():
+    short_phone = phone.split('_')[0]
+    if short_phone+lengthening_mark not in short_phone_to_class.keys():
+        short_phone_to_class[short_phone+lengthening_mark] = ct
+        ct += 1
+    next_kaldi_class = len(class_to_class.keys())
+    class_to_class[next_kaldi_class] = short_phone_to_class[short_phone+lengthening_mark]
+    phone_to_class[phone.replace('_', lengthening_mark + '_')] = next_kaldi_class
 
+
+mkdir(data_cache_dir)        
+phonesoutfile = open(os.path.join(data_cache_dir, 'phones.conf'), 'w')
+
+
+print("Writing phone & class info to %s" % phonesoutfile)
+
+phonesoutfile.write('[kaldi_class_to_class]\n')
+
+for k,v in class_to_class.items():
+    phonesoutfile.write("%i = %i\n" % (int(k), int(v)))
+
+phonesoutfile.write('\n\n')
+phonesoutfile.write('[phoneme_class]\n')
+
+for k,v in short_phone_to_class.items():
+    phonesoutfile.write("%s = %i\n" % (k, int(v)))
+
+
+articulatory_features = {}
+phonedefs = {}
+phonecategories = {}
+for l in ipadefinitions.keys():
+    for k,p in ipadefinitions[l].items():
+        if p['ipa'] not in phonedefs.keys():
+            phonedefs[p['ipa']] = {'features' : p['features'],
+                                   'category' : p['category'].lower() }
+        if p['category'].lower() not in phonecategories.keys():
+            phonecategories[p['category'].lower()] = {'phones' : []}
+        phonecategories[p['category'].lower()]['phones'].append(p['ipa'])
+
+phonesoutfile.write('\n\n')
+phonesoutfile.write('[phoneme_to_articulatory]\n')
+
+unfortunate_phone_map = {}
+
+for k in short_phone_to_class.keys():
+    if k in phonedefs.keys():
+        feat = phonedefs[k]['features']
+        for f in feat:
+            articulatory_features[f] = 1
+        phonesoutfile.write("%s = %s\n" % (k, ','.join(feat)))
+        unfortunate_phone_map[k] = k
+        
+    elif k.replace(lengthening_mark, '') in phonedefs.keys():
+        print("%s shortened" % k)
+        print("What to do with phone %s" % k)
+        feat = ','.join(phonedefs[ k.replace(lengthening_mark, '') ]['features'])
+        for f in feat:
+            articulatory_features[f] = 1
+        phonesoutfile.write("%s = %s\n" % (k, ','.join(feat)))
+        unfortunate_phone_map[k] = k.replace(lengthening_mark, '')
+        
+    elif k + lengthening_mark in phonedefs.keys():
+        print("%s lenghtened" % k)
+        feat = phonedefs[ k + lengthening_mark ]['features']
+        for f in ['long', 'geminated']:
+            if f in feat:
+                feat.remove(f)
+        #feat = re.sub(',long|long,', '', feat)
+        #feat = re.sub(',geminated|geminated,', '', feat)
+        for f in feat:
+            articulatory_features[f] = 1
+        phonesoutfile.write("%s = %s\n" % (k, ','.join(feat)))
+        unfortunate_phone_map[k] = k + lengthening_mark
+    else:
+        print("Trouble: No mention of phone %s in definitions" % k)
+
+
+phonesoutfile.write('\n\n')
+phonesoutfile.write('[articulatory_class]\n')
+art_counter = 0
+for k in articulatory_features.keys():
+    phonesoutfile.write("%s = %i\n" % (k, art_counter))
+    art_counter += 1
+
+
+
+phonesoutfile.write('\n\n')
+phonesoutfile.write('[event_to_class]\n')
+
+most_popular_phones = {}
+
+catct = 0        
+for cat in phonecategories.keys():
+    categoryphones,counts = np.unique(phonecategories[cat]['phones'], return_counts=True)
+    most_popular_phones[cat] = categoryphones[np.argmax(counts)]
+    category_index = catct
+    catct += 1
+    phonesoutfile.write("%s = %s\n" % (cat, category_index))
+
+phonesoutfile.write('\n\n')
+phonesoutfile.write('[event_representations]\n')
+
+for cat in phonecategories.keys():
+    phonesoutfile.write("%s = %s\n" % (cat, most_popular_phones[cat]))
+    
+
+    
+phonesoutfile.write('\n\n')
+phonesoutfile.write('[phoneme_to_event]\n')  
+    
+for k in short_phone_to_class.keys():
+    if k in phonedefs.keys():
+        phonesoutfile.write("%s = %s\n" % (k, phonedefs[k]['category']))
+    elif k.replace(lengthening_mark, '') in phonedefs.keys():
+        phonesoutfile.write("%s = %s\n" % (k, phonedefs[ k.replace(lengthening_mark, '') ]['category']))
+    elif k + lengthening_mark in phonedefs.keys():
+        phonesoutfile.write("%s = %s\n" % (k, phonedefs[ k + lengthening_mark ]['category']))
+    else:
+        print("Trouble: No mention of phone %s in definitions" % k)
+
+
+    
         
 # Create alignment ctm files:
 
-for dataset in ['train', 'devel', 'test']:
+for dataset in ['tellme']: #'siak', 'train', 'devel', 'test']:
     for alignmentset in alignmentdirs[dataset]:
     
         alignmentdir = os.path.join(alignmentbasedir, alignmentset )
@@ -439,34 +598,35 @@ for dataset in ['train', 'devel', 'test']:
         
         promptsfile = os.path.join(labelbasedir, alignmentset.replace('tri3b_ali_', ''),  'text')
         filescpfile = os.path.join(labelbasedir, alignmentset.replace('tri3b_ali_', ''),  'wav.scp')
-        starttimefile = os.path.join(labelbasedir, alignmentset.replace('tri3b_ali_', ''),  'feats.scp')
+        #starttimefile = os.path.join(labelbasedir, alignmentset.replace('tri3b_ali_', ''),  'feats.scp')
 
         #files_that_survived_cleaning_file = os.path.join(cleaned_labelbasedir, alignmentset.replace('tri3b_ali_', ''),  'feats.scp')
 
         #files_that_survived_cleaning = {}
 
-        starttimescp={}
-
-        print("Reading filepaths from %s" % starttimefile)
-        for l in open(starttimefile,'r').readlines():
-            f,p = l.strip().split(' ',1)
-            #files_that_survived_cleaning[re.sub(r'\-[0-9]$',f)] = 1
-
-            starttime = re.search(r'\[([0-9]+)\:[0-9]+\]', p)
-            if starttime is None:
-                #print("problem with starttime, continuing")
-                #print(f,p)
-                #print(starttime)
-                #continue
-                starttimescp[f] = 0
-            else:
-                starttimescp[f] = float(starttime.group(1))/100
+        
+        #starttimescp={}
+        #
+        #print("Reading filepaths from %s" % starttimefile)
+        #for l in open(starttimefile,'r').readlines():
+        #    f,p = l.strip().split(' ',1)
+        #    #files_that_survived_cleaning[re.sub(r'\-[0-9]$',f)] = 1
+        #
+        #    starttime = re.search(r'\[([0-9]+)\:[0-9]+\]', p)
+        #    if starttime is None:
+        #        #print("problem with starttime, continuing")
+        #        #print(f,p)
+        #        #print(starttime)
+        #        #continue
+        #        starttimescp[f] = 0
+        #    else:
+        #        starttimescp[f] = float(starttime.group(1))/100
 
         i = 1
 
-        print("Checking for file %s/ali.%i.gz" % (alignmentdir, i))
-        while os.path.exists("%s/ali.%i.gz" % (alignmentdir, i) ):
-            outfile='/tmp/%s_ali_for_tfrecords.%i' %(alignmentset, i)
+        print("Checking for file %s/ali.%i.gz" % ( alignmentdir, i))
+        while os.path.exists("%s/ali.%i.gz" % ( alignmentdir, i) ):
+            outfile='/tmp/%s_%s_ali_for_tfrecords.%i' %(kaldidir, alignmentset, i)
             if os.path.exists(outfile):
                 print("File %s exists already" % outfile)
             else:
@@ -509,7 +669,7 @@ for dataset in ['train', 'devel', 'test']:
             plen=0
             corpus=''
             ct = 0
-            for l in open('/tmp/%s_ali_for_tfrecords.%i' %(alignmentset, i), 'r').readlines():
+            for l in open('/tmp/%s_%s_ali_for_tfrecords.%i' %(kaldidir, alignmentset, i), 'r').readlines():
                 f,_,s,d,p = l.strip().split()
                 plen += 1
                 if f != oldf:
@@ -522,8 +682,7 @@ for dataset in ['train', 'devel', 'test']:
                         phone_lengths[corpus] = []
                         time_lengths[corpus] = []
                 oldf = f    
-                olde = float(s)+float(d) # start + duration
-
+                olde = float(s)+float(d) # start + duration                
 
             phone_lengths[corpus].append(int(plen))
             time_lengths[corpus].append(float(olde))
@@ -540,61 +699,74 @@ for dataset in ['train', 'devel', 'test']:
             begintime=0
             ind_ph=[]
 
-            for l in open('/tmp/%s_ali_for_tfrecords.%i' %(alignmentset, i), 'r').readlines():
+            for l in open('/tmp/%s_%s_ali_for_tfrecords.%i' %(kaldidir, alignmentset, i), 'r').readlines():
 
                 f,_,s,d,p = l.strip().split()
                 if debug:
                     print(f,s,d,class_to_phone[p])
-                pseq.append( class_to_phone[p].split('_')[0] )
-                cseq.append( int(p) )
 
-                #if (class_to_phone[p] == 'sil' and float(d) > 0.4) or f != oldf:
-                if f != oldf:
+                #if (phone == 'sil' and float(d) > 0.4) or f != oldf:
+                if f != oldf or (split_files and oldphone == 'sil' and float(oldd) > 1.0 and plen>1 ):
+                    #print("f is not oldf")
                     if oldf is not '':
-                        #if 'spn' not in pseq and 'spn_S' not in pseq:
-                            #if plen==3:
-                            #    print (pseq)
-                            #chopped_phone_lengths[corpus].append(int(plen))
-                            ##chopped_time_lengths[corpus].append(float(olde))
-                            #chopped_time_lengths[corpus].append(float(s)+0.75*float(d))
                             sourcefiles[corpus].append(oldf)
-                            starttimes[corpus].append(begintime)
-                            if debug:
-                                print("Adding duration",float(olde), '+', 0.5*float(d), '-', begintime,'=',float(olde) + 0.5*float(d) - begintime)
-                            if class_to_phone[p] == 'sil':
-                                endsilencelengths[corpus].append(float(float(d)))
+                            if not split_files:
+                                starttimes[corpus].append(0)
+                            else:
+                                starttimes[corpus].append(begintime)
+                                if f == oldf:
+                                    #print("mid sentence split %s" % f)
+                                    ind_ph[-1][1] = 0.5 * ind_ph[-1][1]
+                                    print("Appending to phoneseqs et al again!")
+                                    phoneseqs[corpus].append(pseq)
+                                    classseqs[corpus].append(cseq)
+                                else:
+                                    print("I would append to phoneseqs but f %s != oldf %s!"%(f, oldf))
+                            if oldphone == 'sil':
+                                endsilencelengths[corpus].append(float(oldd))
                                 durations[corpus].append(float(olde) + float(oldd) - begintime)
                             else:
                                 endsilencelengths[corpus].append( 0.0 )
-                                durations[corpus].append(float(olde) + float(d) - begintime)
-                            phoneseqs[corpus].append(pseq)
-                            classseqs[corpus].append(cseq)
+                                durations[corpus].append(float(olde) + float(oldd) - begintime)
 
                             ages[corpus].append(age)
                             genders[corpus].append(gender)
                             phonemes_for_files[corpus].append(ind_ph)
+                            phoneseqs[corpus].append(pseq)
+                            classseqs[corpus].append(cseq)
 
-                    ind_ph = [] # [float(s),float(d),int(p), class_to_phone[p]] ]
-
-                    pseq = [class_to_phone[p]]
-                    cseq = [int(p)]
-                    plen=1
+                    else:
+                        print("oldf is ")
+                    ind_ph = [] # [float(s),float(d),int(p), phone] ]
+                    pseq = []
+                    cseq = []
+                    plen = 0
+                    
+                    #pseq = [phone]
+                    #cseq = [int(p)]
+                    #plen=1
 
                     age=f[41:43]
                     if age == '--':
                         print("Age problem: %s %s"%(age, f))
                     gender=f[40]
 
-                    #if class_to_phone[p] == 'sil':                
+                    #if phone == 'sil':                
                     #    begintime = float(s) #+ 0.5 * float(d)
                     #else:
                     #    begintime = float(s)
-                    begintime = 0
-
+                    if f == oldf:
+                        print("Problem! f == oldf")
+                        sys.exit(1)
+                        begintime = float(olds) + 0.5 * float(oldd)
+                    else:
+                        begintime = 0
+                        
                     if debug:
                         print('begintime =',begintime)
                     corpus=f[:40]
                     if corpus not in corpora:
+                        print("corpus %s not in"%corpus, corpora) 
                         #chopped_phone_lengths[corpus] = []
                         #chopped_time_lengths[corpus] = []
 
@@ -611,27 +783,33 @@ for dataset in ['train', 'devel', 'test']:
 
                         corpora.append(corpus)
                     ct += 1
+
+                phone = class_to_phone[p]
+                if phone in duration_cutoffs.keys() and float(d) > duration_cutoffs[phone]/100:
+                    phone = phone.replace('_', lengthening_mark + '_')
+                    #print("Lengthening %s => %s for duration %0.2f" % (class_to_phone[p], phone, float(d)))                    
+                    p = phone_to_class[phone]
+                #print("Appending phone.split('_')[0]", phone.split('_')[0])
+                pseq.append( phone.split('_')[0] )                    
+                cseq.append( int(p) )
+                ind_ph.append([float(s)-begintime,float(s)+float(d)-begintime,int(p), phone])
+                plen += 1
+                
                 oldf = f    
                 olde = float(s)+float(d) # start + duration
                 oldd = float(d)
                 olds = float(s)
+                oldphone = phone
 
-                #if 'spn' not in class_to_phone[p]:
-                # Write phoneme to tfrecords:
-                ind_ph.append([float(s),float(s)+float(d),int(p), class_to_phone[p]])
-                plen += 1
-                #if ct == 200:
-                #    break
-            #chopped_phone_lengths[corpus].append(int(plen))
-            #chopped_time_lengths[corpus].append(float(olde))
-            if plen > 2:
+            if plen > 1:
+                print("Adding to phoneseqs et al")
                 sourcefiles[corpus].append(oldf)
                 starttimes[corpus].append(begintime)
                 phoneseqs[corpus].append(pseq)
                 classseqs[corpus].append(cseq)
                 ages[corpus].append(age)
                 genders[corpus].append(gender)
-                if class_to_phone[p] == 'sil':
+                if phone == 'sil':
                     endsilencelengths[corpus].append(float(d))
                     durations[corpus].append(float(olde) + float(d) - begintime)
                 else:
@@ -755,6 +933,11 @@ for dataset in ['train', 'devel', 'test']:
               for j in np.random.permutation(np.intersect1d(np.where(np.array(durations[k]) > timebin[0])[0], np.where(np.array(durations[k]) <= timebin[1])[0])):
                 f = sourcefiles[k][j]
 
+                
+                
+                if f not in prompts.keys():
+                    print("No prompt found so rejecting %s" % f)
+                    continue
                 wseq = prompts[f]
                 if '<UNK>' in wseq:
                     print ("<UNK> in prompt of %s" % f)
@@ -782,7 +965,7 @@ for dataset in ['train', 'devel', 'test']:
                 if startoffset != 0:
                     print("File %s start offset %f" % (f, startoffset))
 
-                gender = genders[k][j]
+                gender = 'm' #genders[k][j]
                 if gender.lower() != 'm' and gender.lower() != 'f':
                     print ("Gender '%s' not m or f for %s" % (gender, f))
                     continue
@@ -798,6 +981,9 @@ for dataset in ['train', 'devel', 'test']:
                 #    continue
                 individual_phonemes = phonemes_for_files[k][j]
 
+                #print( k, '\t', j,'\t', f)                
+                #print("Number of phoneseqs for corpus %s:"%k,len(phoneseqs[k]))
+                #print(phoneseqs[k])
                 pseq = phoneseqs[k][j]
                 if ' '.join(pseq) == 'sil s p n sil':
                     continue
